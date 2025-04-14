@@ -2,45 +2,54 @@ import streamlit as st
 import torch
 import cv2
 import numpy as np
-import os
 from model import MicrostructureCNN
 
-st.set_page_config(page_title="Microstructure Predictor", layout="centered")
+# --- Setup ---
+st.set_page_config(page_title="AI-Driven Microstructure Tool", layout="centered")
+st.title("AI-Driven Microstructure Tool")
 
-@st.cache_resource
-def load_model():
-    model = MicrostructureCNN()
-    model.load_state_dict(torch.load('microstructure_model.pth', map_location='cpu'))
-    model.eval()
-    return model
+# --- Tool Selection ---
+tool = st.sidebar.selectbox("Select Tool", [
+    "Bead Geometry Predictor",
+    "Process Parameter Optimizer"
+])
 
-model = load_model()
-LABELS = ['d (p/h)', 'f (h/w)', 'w (width)', 'h (height)', 'p (depth)']
+# --- Bead Geometry Predictor ---
+if tool == "Bead Geometry Predictor":
+    st.header("Bead Geometry Predictor")
+    uploaded_file = st.file_uploader("Upload a .tif cross-section image", type=["tif"])
 
-def predict(img_bytes):
-    file_bytes = np.asarray(bytearray(img_bytes), dtype=np.uint8)
-    img = cv2.imdecode(file_bytes, cv2.IMREAD_GRAYSCALE)
-    img = cv2.resize(img, (224, 224))
-    img = img.astype(np.float32) / 255.0
-    img_tensor = torch.from_numpy(img).unsqueeze(0).unsqueeze(0)
+    if uploaded_file is not None:
+        # Load image
+        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+        img = cv2.imdecode(file_bytes, cv2.IMREAD_GRAYSCALE)
+        img_resized = cv2.resize(img, (224, 224))
+        img_normalized = img_resized.astype(np.float32) / 255.0
+        img_tensor = torch.from_numpy(img_normalized).unsqueeze(0).unsqueeze(0)  # [1, 1, 224, 224]
 
-    with torch.no_grad():
-        output = model(img_tensor)
-        return dict(zip(LABELS, output.squeeze().tolist())), img
+        # Load model
+        model = MicrostructureCNN()
+        model.load_state_dict(torch.load("microstructure_model.pth", map_location=torch.device('cpu')))
+        model.eval()
 
-st.title("Microstructure Predictor")
+        # Predict
+        with torch.no_grad():
+            output = model(img_tensor)
+            w, h, p = output.squeeze().tolist()
+            f = h / w if w != 0 else 0
+            d = p / h if h != 0 else 0
 
-# File uploader
-uploaded_file = st.file_uploader("Upload a .tif microstructure image", type=["tif", "tiff"])
+        # Display results
+        st.subheader("Predicted Geometry")
+        st.write(f"**Width (w):** {w:.2f} µm")
+        st.write(f"**Height (h):** {h:.2f} µm")
+        st.write(f"**Depth (p):** {p:.2f} µm")
+        st.markdown("---")
+        st.subheader("Derived Ratios")
+        st.write(f"**f = h/w:** {f:.2f}")
+        st.write(f"**d = p/h:** {d:.2f}")
 
-if uploaded_file:
-    try:
-        preds, img = predict(uploaded_file.read())
-        st.image(img, caption="Uploaded Microstructure", width=300, channels="GRAY")
-        st.markdown("###Predicted Microstructure Properties")
-        for k, v in preds.items():
-            st.write(f"**{k}:** {v:.4f}")
-    except Exception as e:
-        st.error(f"Error: {str(e)}")
-else:
-    st.info("Please upload a .tif image to get predictions.")
+# --- Process Parameter Optimizer ---
+elif tool == "Process Parameter Optimizer":
+    st.header("Process Parameter Optimizer")
+    st.info("Coming soon: Input w, h, p and get predicted Laser Power, Scan Speed, and Powder Flow Rate.")

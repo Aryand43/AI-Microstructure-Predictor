@@ -3,10 +3,11 @@ import cv2
 import numpy as np
 from model import MicrostructureCNN
 import os
+
 device = torch.device('cpu')
 MODEL_PATH = 'microstructure_model.pth'
 IMG_SIZE = 224
-LABELS = ['d (p/h)', 'f (h/w)', 'w (width)', 'h (height)', 'p (depth)']
+LABELS = ['w (width)', 'h (height)', 'p (depth)', 'f (h/w)', 'd (p/h)']
 
 model = MicrostructureCNN()
 model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
@@ -21,8 +22,10 @@ def predict_from_tif(img_path):
     img_tensor = torch.from_numpy(img).unsqueeze(0).unsqueeze(0)
     with torch.no_grad():
         output = model(img_tensor)
-        prediction = output.squeeze().tolist()
-    return dict(zip(LABELS, prediction))
+        w, h, p = output.squeeze().tolist()
+        f = h / w if w != 0 else 0
+        d = p / h if h != 0 else 0
+    return dict(zip(LABELS, [w, h, p, f, d]))
 
 if __name__ == '__main__':
     image_dir = '../data/images'

@@ -24,7 +24,7 @@ for i, (inputs, targets) in enumerate(dataloader):
     print("TARGET:", targets)
     break
 
-num_epochs = 10
+num_epochs = 300
 for epoch in range(num_epochs):
     model.train()
     running_loss = 0.0

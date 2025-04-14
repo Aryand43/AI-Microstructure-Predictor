@@ -5,7 +5,7 @@ import cv2
 class MicrostructureDataset(torch.utils.data.Dataset):
     def __init__(self, image_dir, label_csv):
         self.image_dir = image_dir
-        self.labels_df = pd.read_csv(label_csv)[['d=p/h', 'f=h/w', 'w', 'h', 'p']]
+        self.labels_df = pd.read_csv(label_csv)[['w', 'h', 'p']]
         self.labels_df = self.labels_df.dropna().reset_index(drop=True)
         self.image_files = sorted([f for f in os.listdir(image_dir) if f.endswith('.tif')])
         self.image_files = self.image_files[:len(self.labels_df)]

@@ -13,7 +13,7 @@ class MicrostructureCNN(nn.Module):
         self.pool3 = nn.MaxPool2d(2, 2)
         #Dimensions: (64, 28, 28)
         self.fc1 = nn.Linear(64 * 28 * 28, 256)
-        self.fc2 = nn.Linear(256, 5)
+        self.fc2 = nn.Linear(256, 3)
     def forward(self, x): 
         x = self.pool1(F.relu(self.conv1(x)))
         x = self.pool2(F.relu(self.conv2(x)))
@@ -21,10 +21,6 @@ class MicrostructureCNN(nn.Module):
         x = x.view(x.size(0), -1)
         x = F.relu(self.fc1(x))
         x = self.fc2(x)
-        x = torch.cat([
-            F.softplus(x[:, 0:2]),
-            x[:, 2:]
-        ], dim=1)
         return x
 
 
