@@ -158,7 +158,7 @@ if __name__ == '__main__':
     for img_data in full_dict.values():
         for key in required_keys:
             if key not in img_data:
-                raise ValueError(f"Missing key '{key}' in dataset entry: {img_data}")
+                raise ValueError(f"[DATA ERROR] Missing key '{key}' in this entry:\n{img_data}\n\nCheck if remap_keys() in dataset_loader.py is correctly applied.")
 
     transform_train = transforms.Compose([
         transforms.Resize((224, 224)),
@@ -192,5 +192,5 @@ if __name__ == '__main__':
     else:
         dataset = MicrostructureDataset(full_dict, transform=transform_train, normalize_labels=True)
         dataloader = DataLoader(dataset, batch_size=16, shuffle=True)
-        model = get_resnet18(output_size=10)
+        model = get_resnet(model_name="resnet34", output_size=10)
         train_model(model, dataloader, epochs=150)

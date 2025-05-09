@@ -44,12 +44,15 @@ def load_material_datasets(
 
 
 KEY_REMAP = {
-    'Power (W)': 'Power',
-    'Scanning speed (mm/min)': 'Scanning Speed',
-    'Powder flow rate (g/min)': 'Powder Flow Rate',
-    'Power': 'Power',
-    'Scanning speed': 'Scanning Speed',
-    'Powder flow rate': 'Powder Flow Rate',
+    'power (w)': 'Power',
+    'scanning speed (mm/min)': 'Scanning Speed',
+    'powder flow rate (g/min)': 'Powder Flow Rate',
+    'power': 'Power',
+    'scanning speed': 'Scanning Speed',
+    'powder flow rate': 'Powder Flow Rate',
+    'width (um)': 'w',
+    'height (um)': 'h',
+    'depth (um)': 'p',
     'density': 'Density',
     'thermal_conductivity': 'Thermal Conductivity',
     'specific_heat': 'Specific Heat Capacity',
@@ -66,6 +69,13 @@ def safe_numeric_key(filename):
 def create_material_dict(images_dir, labels_csv, material_properties):
     df = pd.read_csv(labels_csv)
     df.columns = df.columns.str.strip().str.lower()
+
+    # Optional geometry column filtering if available
+    geometry_candidates = ["width (um)", "height (um)", "depth (um)"]
+    if all(col in df.columns for col in geometry_candidates):
+        df = df.dropna(subset=geometry_candidates).reset_index(drop=True)
+
+    # Determine correct input columns
     input_candidates = [
         ["power", "scanning speed", "powder flow rate"],
         ["power (w)", "scanning speed (mm/min)", "powder flow rate (g/min)"]
@@ -85,16 +95,25 @@ def create_material_dict(images_dir, labels_csv, material_properties):
         print(f"[WARNING] Image-label mismatch: {len(image_files)} images vs {len(df)} labels")
 
     material_dict = {}
+    skipped = 0
     for idx, filename in enumerate(image_files):
         if idx < len(df):
             row = df.iloc[idx].to_dict()
             row = remap_keys(row)
             row.update(remap_keys(material_properties))
+
+            # Post-remap: skip if essential geometry keys are missing or NaN
+            if any(pd.isna(row.get(k)) for k in ["w", "h", "p"]):
+                skipped += 1
+                continue
+
             row["image_path"] = os.path.join(images_dir, filename)
             material_dict[filename] = row
 
-    return material_dict
+    if skipped > 0:
+        print(f"[INFO] Skipped {skipped} entries with missing geometry fields.")
 
+    return material_dict
 
 if __name__ == "__main__":
     co_data, steel_data, h13_data = load_material_datasets()
