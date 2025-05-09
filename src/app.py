@@ -1,3 +1,4 @@
+# === Microstructure Analysis Dashboard v2 (SC3DP Enhanced) ===
 import streamlit as st
 import torch
 from torchvision import transforms
@@ -7,46 +8,45 @@ import numpy as np
 import joblib
 import pandas as pd
 import matplotlib.pyplot as plt
-from model import get_resnet18, predict_from_image
+from model import get_resnet
 from dataset_loader import load_material_datasets
 
-# === Session Styling ===
+# === Streamlit UI Setup ===
 st.set_page_config(page_title="Microstructure Analysis Dashboard", layout="wide")
 st.markdown("""
 <style>
     .stApp { font-family: 'Helvetica Neue', sans-serif; }
-    h1, h2, h3 { color: #2c3e50; }
+    h1, h2, h3 { color: #0b3d91; }
     .stMetricValue { font-weight: bold; color: #1abc9c; }
+    .material-header { background-color: #e8f5e9; padding: 5px 10px; border-radius: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
+# === Title & Version Info ===
 st.title("Microstructure Analysis Dashboard")
+st.caption("Model v1.2 | Dataset v2025-05 | Powered by ResNet34 | SC3DP Internal")
 
-st.sidebar.markdown("""
-## Project Overview
-This dashboard predicts melt pool characteristics, processing parameters, and inferred material properties from laser-melted alloy images.
-
-Model powered by ResNet18 trained on cross-section melt pool images.
-""")
-
+# === Load Model & Label Keys ===
 label_scaler = joblib.load("label_scaler.pkl")
 
 @st.cache_resource
 def load_model_and_keys():
-    dict_co, dict_steel = load_material_datasets()
-    full_dict = {**dict_co, **dict_steel}
+    dict_co, dict_steel, dict_h13 = load_material_datasets()
+    full_dict = {"CoCrFeNi": dict_co, "Steel": dict_steel, "H13": dict_h13}
     label_keys = [
         "w", "h", "p",
         "Power", "Scanning Speed", "Powder Flow Rate",
         "Density", "Thermal Conductivity", "Specific Heat Capacity", "Thermal Expansion Coefficient"
     ]
-    model = get_resnet18(output_size=len(label_keys))
+    model = get_resnet(model_name="resnet34", output_size=len(label_keys))
     model.load_state_dict(torch.load("best_model.pt", map_location=torch.device("cpu")))
     model.eval()
-    return model, label_keys
+    return model, label_keys, full_dict
 
+# === Prediction Function ===
 def predict_from_tif(image_path, model, label_keys):
     try:
+        from model import predict_from_image
         preds = predict_from_image(image_path, model, label_keys, label_scaler)
         w, h, p = preds.get("w"), preds.get("h"), preds.get("p")
         preds["d"] = p / h if h else None
@@ -56,69 +56,84 @@ def predict_from_tif(image_path, model, label_keys):
         st.error(f"Prediction failed: {e}")
         return None
 
+# === Sidebar: Session Summary Panel ===
+st.sidebar.title("Session Summary")
+material_choice = st.sidebar.selectbox("Select Material Type", ["CoCrFeNi", "Steel", "H13"])
+advanced_mode = st.sidebar.checkbox("Enable Advanced Mode")
+
 if "history" not in st.session_state:
     st.session_state.history = []
 
-uploaded_file = st.file_uploader("Upload Melt Pool Image (.tif, .jpg, .png)", type=["tif", "jpg", "png"])
+# === Upload + Batch Support ===
+st.header("Upload Melt Pool Image(s)")
+uploaded_files = st.file_uploader("Upload one or more images", type=["tif", "jpg", "png"], accept_multiple_files=True)
 
-if uploaded_file is not None:
-    col1, col2 = st.columns([1, 2])
-    with col1:
+if uploaded_files:
+    model, label_keys, full_dict = load_model_and_keys()
+    selected_dict = full_dict[material_choice]
+
+    for uploaded_file in uploaded_files:
+        st.markdown(f"### Analyzing: `{uploaded_file.name}`")
+        cols = st.columns([1, 2])
         img = Image.open(uploaded_file).convert("L")
-        st.image(img, caption="Uploaded Image", use_column_width=True)
-        img.save("temp_image.tif")
+        cols[0].image(img, caption="Uploaded Image", use_column_width=True)
 
-    with col2:
-        model, label_keys = load_model_and_keys()
-        predictions = predict_from_tif("temp_image.tif", model, label_keys)
+        # Save temporarily
+        temp_path = f"temp_{uploaded_file.name}"
+        img.save(temp_path)
 
-        if predictions:
-            st.session_state.history.append(predictions)
+        preds = predict_from_tif(temp_path, model, label_keys)
 
-            st.success(f"""
-### Prediction Summary
-- **Width (w):** {predictions['w']:.2f} µm  
-- **Height (h):** {predictions['h']:.2f} µm  
-- **Depth (p):** {predictions['p']:.2f} µm  
-""")
+        if preds:
+            st.session_state.history.append(preds)
+            outliers = []
+            if preds["Power"] > np.mean([x["Power"] for x in st.session_state.history]) + 2 * np.std([x["Power"] for x in st.session_state.history]):
+                outliers.append("Power is unusually high")
 
-            st.markdown("---")
-            st.subheader("Predicted Melt Pool Geometry")
-            fig, ax = plt.subplots()
-            ax.bar(["Width", "Height", "Depth"], [predictions['w'], predictions['h'], predictions['p']], color=['#3498db', '#2ecc71', '#e74c3c'])
-            ax.set_ylabel("µm")
-            ax.set_title("Predicted Melt Pool Geometry")
-            st.pyplot(fig)
+            # === TABS ===
+            tabs = st.tabs(["Geometry", "Process Parameters", "Material Properties", "CSV Export", "History"])
 
-            st.markdown("---")
-            st.subheader("Predicted Process Parameters")
-            st.metric("Power", f"{predictions['Power']:.2f} W")
-            st.metric("Scanning Speed", f"{predictions['Scanning Speed']:.2f} mm/min")
-            st.metric("Powder Flow Rate", f"{predictions['Powder Flow Rate']:.2f} g/min")
+            with tabs[0]:
+                st.metric("Width (w)", f"{preds['w']:.2f} µm", help="Melt pool width in microns")
+                st.metric("Height (h)", f"{preds['h']:.2f} µm")
+                st.metric("Depth (p)", f"{preds['p']:.2f} µm")
+                st.metric("Dilution Ratio (p/h)", f"{preds['d']:.4f}" if preds['d'] else "N/A")
+                st.metric("Form Factor (h/w)", f"{preds['f']:.4f}" if preds['f'] else "N/A")
+                fig, ax = plt.subplots()
+                ax.bar(["Width", "Height", "Depth"], [preds['w'], preds['h'], preds['p']], color=["#1f77b4", "#2ca02c", "#d62728"])
+                ax.set_ylabel("µm")
+                ax.set_title("Melt Pool Geometry")
+                st.pyplot(fig)
 
-            st.markdown("---")
-            st.subheader("Derived Metrics")
-            st.metric("Dilution Ratio (d = p/h)", f"{predictions['d']:.4f}" if predictions['d'] else "N/A")
-            st.metric("Form Factor (f = h/w)", f"{predictions['f']:.4f}" if predictions['f'] else "N/A")
+            with tabs[1]:
+                st.metric("Power", f"{preds['Power']:.2f} W")
+                st.metric("Scanning Speed", f"{preds['Scanning Speed']:.2f} mm/min")
+                st.metric("Powder Flow Rate", f"{preds['Powder Flow Rate']:.2f} g/min")
+                if advanced_mode:
+                    st.warning("Advanced Engineering Note: Watch for low flow rate + high power combinations.")
+                if outliers:
+                    st.error("\n".join(outliers))
 
-            st.markdown("---")
-            st.subheader("Predicted Material Properties")
-            st.metric("Density", f"{predictions['Density']:.2f} kg/m³")
-            st.metric("Thermal Conductivity", f"{predictions['Thermal Conductivity']:.2f} W/m·K")
-            st.metric("Specific Heat Capacity", f"{predictions['Specific Heat Capacity']:.2f} J/kg·K")
-            st.metric("Thermal Expansion Coefficient", f"{predictions['Thermal Expansion Coefficient']:.6f} 1/K")
+            with tabs[2]:
+                st.metric("Density", f"{preds['Density']:.2f} kg/m³")
+                st.metric("Thermal Conductivity", f"{preds['Thermal Conductivity']:.2f} W/m·K")
+                st.metric("Specific Heat Capacity", f"{preds['Specific Heat Capacity']:.2f} J/kg·K")
+                st.metric("Thermal Expansion Coefficient", f"{preds['Thermal Expansion Coefficient']:.6f} 1/K")
 
-            st.markdown("---")
-            csv = pd.DataFrame([predictions]).to_csv(index=False).encode("utf-8")
-            st.download_button("Download Predictions (.csv)", csv, "predictions.csv", "text/csv")
+            with tabs[3]:
+                csv = pd.DataFrame([preds]).to_csv(index=False).encode("utf-8")
+                st.download_button("Download CSV", csv, f"{uploaded_file.name}_prediction.csv", "text/csv")
 
-            st.markdown("---")
-            st.markdown("### Session Prediction History")
-            st.dataframe(pd.DataFrame(st.session_state.history).round(2))
+            with tabs[4]:
+                st.dataframe(pd.DataFrame(st.session_state.history).round(2))
+                if st.button("Clear History"):
+                    st.session_state.history.clear()
+                    st.experimental_rerun()
 
+# === Footer ===
 st.markdown("""
 ---
-**Footer**  
-Model powered by ResNet18 – trained on cross-section melt pool images.  
-© 2025 SC3DP. All rights reserved.
+<center>
+<i>SC3DP | Nanyang Technological University | Microstructure Predictor – ResNet34 (v1.2)</i>
+</center>
 """)

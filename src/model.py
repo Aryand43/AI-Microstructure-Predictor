@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, models
-from torchvision.models import resnet18
+from torchvision.models import resnet34
 from PIL import Image
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
@@ -46,17 +46,34 @@ class MicrostructureDataset(Dataset):
         return image, label_tensor
 
 # === Model ===
-def get_resnet18(output_size):
-    model = resnet18(pretrained=True)
+def get_resnet(model_name="resnet18", output_size=10, dropout_rate=0.3):
+    if model_name == "resnet34":
+        model = resnet34(pretrained=True)
+    else:
+        model = resnet18(pretrained=True)
+
     model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
-    model.fc = nn.Linear(model.fc.in_features, output_size)
+    num_features = model.fc.in_features
+    model.fc = nn.Sequential(
+        nn.BatchNorm1d(num_features),
+        nn.Dropout(dropout_rate),
+        nn.Linear(num_features, output_size)
+    )
     return model
+
 
 # === Loss Function ===
 def hybrid_loss(output, target):
-    mse = nn.MSELoss()(output, target)
-    l1 = nn.L1Loss()(output, target)
+    weights = torch.tensor([
+        1, 1, 1,   
+        0.5, 0.5, 0.5,   
+        0.2, 0.2, 0.2, 0.2  
+    ], dtype=torch.float32).to(output.device)
+
+    mse = nn.MSELoss()(output * weights, target * weights)
+    l1 = nn.L1Loss()(output * weights, target * weights)
     return 0.7 * mse + 0.3 * l1
+
 
 # === Train Function ===
 def train_model(model, dataloader, epochs=150, lr=1e-3):
@@ -129,8 +146,8 @@ if __name__ == '__main__':
     parser.add_argument('--infer', type=str, help='Run inference on image path')
     args = parser.parse_args()
 
-    dict_co, dict_steel = load_material_datasets()
-    full_dict = {**dict_co, **dict_steel}
+    dict_co, dict_steel, dict_h13 = load_material_datasets()
+    full_dict = {**dict_co, **dict_steel, **dict_h13}
 
     # Validation: Ensure all keys exist
     required_keys = [
@@ -165,7 +182,7 @@ if __name__ == '__main__':
             "Power", "Scanning Speed", "Powder Flow Rate",
             "Density", "Thermal Conductivity", "Specific Heat Capacity", "Thermal Expansion Coefficient"
         ]
-        model = get_resnet18(output_size=len(label_keys))
+        model = get_resnet(model_name="resnet34", output_size=10)
         model.load_state_dict(torch.load('best_model.pt', map_location=torch.device('cpu')))
         label_scaler = joblib.load("label_scaler.pkl")
         preds = predict_from_image(args.infer, model, label_keys, label_scaler)
